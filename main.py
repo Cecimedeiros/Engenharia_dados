@@ -1,5 +1,5 @@
 from src.extract import Extract
-from src.loading import Loading
+from src.load import Loading
 import json
 
 class download():
@@ -14,8 +14,8 @@ class download():
 
 if __name__=="__main__": #fluxo
 
-    dados_prontos = Extract().extracao(variavel="4099", sexo="5")
+    dados_prontos = Extract().extracao(variavel="4096", sexo="6794")
     carregador = Loading().load(dados_prontos)
-    arquivo = download().download_data(carregador, caminho_arquivo = "dados.json")
+    arquivo = download().download_data(carregador, caminho_arquivo = "pernambuco.json")
 
     print(f"Dados: {carregador}")
