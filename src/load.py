@@ -1,4 +1,5 @@
-from src.extract import Extract
+import json
+
 
 class Loading:
     def __init__(self):
@@ -7,3 +8,6 @@ class Loading:
     def load(self, data):
         return data
 
+    def salvar_json(self, dados, caminho_arquivo):
+        with open(caminho_arquivo, 'w', encoding='utf-8') as f:
+            json.dump(dados, f, ensure_ascii=False, indent=2)

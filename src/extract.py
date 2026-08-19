@@ -13,17 +13,21 @@ class Extract:
     def __init__(self):
         pass
 
-    def extracao(self, variavel="4096|4099|12466", sexo="6794|4|5"):
+    def extracao(self, variavel="4096|4099|12466", sexo="6794,4,5"):
         """
-        Variáveis:
+        Variáveis (separadas por "|" na URL):
             4099: Taxa de desocupação, na semana de referência, das pessoas de 14 anos ou mais de idade;
             4096: Taxa de participação na força de trabalho, na semana de referência, das pessoas de 14 anos ou mais de idade;
             12466: Taxa de informalidade das pessoas de 14 anos ou mais de idade ocupadas na semana de referência.
 
-        Sexo:
+        Sexo (separadas por "," dentro de classificacao=2[...]):
             6794: Total;
             4: Homens;
             5: Mulheres.
+
+        Obs: a API do IBGE usa "|" para separar múltiplas variáveis, mas "," para
+        separar múltiplas categorias dentro de uma classificação (ex.: sexo).
+        Usar "|" em classificacao=2[...] retorna erro 500 da API.
         """
         url = f"https://servicodados.ibge.gov.br/api/v3/agregados/4093/periodos/201201-202602/variaveis/{variavel}?localidades=N3[26]&classificacao=2[{sexo}]"
         response = requests.get(url)
