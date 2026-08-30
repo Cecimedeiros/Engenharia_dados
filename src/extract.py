@@ -1,35 +1,89 @@
 import requests
 
-"""Adaptem a URL da API (ok) e o método criado na aula para que a solução permita escolher e 
-   baixar as diferentes variáveis e categorias de sexo apresentadas acima.
-
-   A ideia é evitar a criação de um código diferente para cada série. A mesma solução deve ser reutilizada, 
-   alterando apenas os parâmetros necessários para realizar cada consulta.
-"""
-
-
 class Extract:
+    # Dicionário de classe com opções fechadas de cidades/coordenadas
+    CIDADES: dict[str, dict[str, float]] = {
+        "sao_paulo": {"latitude": -23.5505, "longitude": -46.6333},
+        "rio_de_janeiro": {"latitude": -22.9068, "longitude": -43.1729},
+        "recife": {"latitude": -8.0543, "longitude": -34.8813}
+    }
 
     def __init__(self):
-        pass
+        """Inicializa os valores fixos."""
+        self.base_url: str = "https://api.open-meteo.com/v1/forecast"
 
-    def extracao(self, variavel="4096|4099|12466", sexo="6794,4,5"):
+    def extract_daily_forecast(self, cidade: str) -> dict:
+        """Busca dados de previsão dos próximos 7 dias da API Open-Meteo.
+
+        Parametros:
+        ----------
+        cidade : str
+            Nome da cidade desejada. Deve ser uma das opções válidas em Extract.CIDADES.
+
+        Returns
+        -------
+        dict
+            Dicionário com a resposta JSON bruta enviada pela API.
+
         """
-        Variáveis (separadas por "|" na URL):
-            4099: Taxa de desocupação, na semana de referência, das pessoas de 14 anos ou mais de idade;
-            4096: Taxa de participação na força de trabalho, na semana de referência, das pessoas de 14 anos ou mais de idade;
-            12466: Taxa de informalidade das pessoas de 14 anos ou mais de idade ocupadas na semana de referência.
+        # Validação do parâmetro contra a lista fechada de opções
+        cidade_limpa = cidade.lower().strip()
+        if cidade_limpa not in self.CIDADES:
+            opcoes = ", ".join(self.CIDADES.keys())
+            raise ValueError(f"Cidade '{cidade}' inválida. Escolha uma das opções: {opcoes}")
 
-        Sexo (separadas por "," dentro de classificacao=2[...]):
-            6794: Total;
-            4: Homens;
-            5: Mulheres.
+        coords = self.CIDADES[cidade_limpa]
 
-        Obs: a API do IBGE usa "|" para separar múltiplas variáveis, mas "," para
-        separar múltiplas categorias dentro de uma classificação (ex.: sexo).
-        Usar "|" em classificacao=2[...] retorna erro 500 da API.
+        params = {
+            "latitude": coords["latitude"],
+            "longitude": coords["longitude"],
+            "daily": [
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "uv_index_max",
+            ],
+            "timezone": "America/Sao_Paulo",
+        }
+
+        response = requests.get(self.base_url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        print("Daily data extraídos com sucesso! ✅")
+        print("--------------------------")
+        return response.json()
+    
+    def extract_hourly_forecast(self, cidade: str = "sao_paulo") -> dict:
+        """Busca dados de previsão horária da API Open-Meteo.
+
+        Parameters
+        ----------
+        cidade : str
+            Nome da cidade desejada (ex: 'recife', 'sao_paulo').
+
+        Returns
+        -------
+        dict
+            Dicionário com a resposta JSON bruta enviada pela API.
+
         """
-        url = f"https://servicodados.ibge.gov.br/api/v3/agregados/4093/periodos/201201-202602/variaveis/{variavel}?localidades=N3[26]&classificacao=2[{sexo}]"
-        response = requests.get(url)
-        data = response.json()
-        return data
+
+        cidade_limpa = cidade.lower().strip()
+        if cidade_limpa not in self.CIDADES:
+            opcoes = ", ".join(self.CIDADES.keys())
+            raise ValueError(f"Cidade '{cidade}' inválida. Escolha uma das opções: {opcoes}")
+        
+        coords = self.CIDADES[cidade_limpa]
+        params = {
+            "latitude": coords["latitude"],
+            "longitude": coords["longitude"],
+            "hourly": ["temperature_2m", "precipitation_probability"],
+            "timezone": "America/Sao_Paulo",
+        }
+
+        response = requests.get(self.base_url, params=params, timeout=10)
+        response.raise_for_status()
+
+        print("Hourly data extraídos com sucesso! ✅")
+        print("--------------------------")
+
+        return response.json()
