@@ -1,0 +1,92 @@
+{
+  "info": {
+    "_postman_id": "158782d6-cd07-4cf7-8bf8-0a8972278e36",
+    "name": "Engenharia de Dados - API IBGE",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "40719566"
+  },
+  "item": [
+    {
+      "name": "Agregados IBGE",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code deve ser 200\", function () {\r\n    pm.response.to.have.status(200);\r\n});\r\n\r\npm.test(\"Resposta deve ser JSON\", function () {\r\n    pm.response.to.be.json;\r\n});\r\n\r\npm.test(\"ID da variável deve ser 4096\", function () {\r\n    const resposta = pm.response.json();\r\n\r\n    pm.expect(resposta[0].id).to.eql(\"4096\");\r\n});\r\n\r\npm.test(\"Variável deve ser taxa de participação na força de trabalho\", function () {\r\n    const resposta = pm.response.json();\r\n\r\n    pm.expect(resposta[0].variavel)\r\n        .to.include(\"Taxa de participação na força de trabalho\");\r\n});\r\n\r\npm.test(\"O ID deve ser um texto\", function () {\r\n    const resposta = pm.response.json();\r\n\r\npm.expect(resposta[0].id).to.be.a(\"string\");\r\n});\r\n"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v3/agregados/4093/periodos/201201-202602/variaveis/4096?localidades=N3[26]&classificacao=2[6794]",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v3",
+            "agregados",
+            "4093",
+            "periodos",
+            "201201-202602",
+            "variaveis",
+            "4096"
+          ],
+          "query": [
+            {
+              "key": "localidades",
+              "value": "N3[26]"
+            },
+            {
+              "key": "classificacao",
+              "value": "2[6794]"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Regiões",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"Status code é 200 OK\", function () { pm.response.to.have.status(200); });\r\n\r\npm.test(\"A resposta deve ser JSON\", function () { pm.response.to.be.json; });\r\n\r\n\r\npm.test(\"Retorna exatamente 5 regiões\", function () { const resposta = pm.response.json(); pm.expect(resposta.length).to.eql(5); });\r\n\r\n\r\npm.test(\"Cada região possui id, sigla e nome\", function () { const resposta = pm.response.json(); resposta.forEach(function(regiao) { pm.expect(regiao).to.have.property('id'); pm.expect(regiao).to.have.property('sigla'); pm.expect(regiao).to.have.property('nome');\r\n    });\r\n});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/localidades/regioes",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "localidades",
+            "regioes"
+          ]
+        }
+      },
+      "response": []
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": ""
+    }
+  ]
+}
