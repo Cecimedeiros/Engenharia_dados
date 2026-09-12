@@ -1,7 +1,6 @@
 import requests
 
 class Extract:
-    # Dicionário de classe com opções fechadas de cidades/coordenadas
     CIDADES: dict[str, dict[str, float]] = {
         "sao_paulo": {"latitude": -23.5505, "longitude": -46.6333},
         "rio_de_janeiro": {"latitude": -22.9068, "longitude": -43.1729},
@@ -26,7 +25,6 @@ class Extract:
             Dicionário com a resposta JSON bruta enviada pela API.
 
         """
-        # Validação do parâmetro contra a lista fechada de opções
         cidade_limpa = cidade.lower().strip()
         if cidade_limpa not in self.CIDADES:
             opcoes = ", ".join(self.CIDADES.keys())

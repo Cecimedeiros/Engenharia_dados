@@ -25,8 +25,10 @@ class Transform:
 
         df = pd.DataFrame(data_payload)
 
-        if "date" in df.columns: 
-            df["date"] = df["date"].dt.date
+        if "time" in df.columns:
+            df["time"] = pd.to_datetime(df["time"])
+
+        df = df.dropna().reset_index(drop=True)
 
         print("Dados transformados com sucesso! ✅")
         print("--------------------------")

@@ -12,8 +12,9 @@ class Loading:
         """Carrega variáveis do .env e inicializa conexões com Mongo e SQLite."""
         load_dotenv()
         self.uri = os.getenv("MONGODB_URI")
+        self.sqlite_path = os.getenv("SQLITE_PATH", "weather.db")
         self.client = MongoClient(self.uri, server_api=ServerApi("1"))
-        self.conn = sqlite3.connect("weather.db")
+        self.conn = sqlite3.connect(self.sqlite_path)
 
     def load_sqlite(self, df: pd.DataFrame, table_name: str) -> None:
         """Salva o DataFrame transformado em uma tabela no SQLite.
@@ -47,7 +48,6 @@ class Loading:
         db = self.client[db_name]
         coll = db[collection]
 
-        # Se for DataFrame
         if isinstance(data, (pd.DataFrame, pd.Series)):
             df = data.to_frame() if isinstance(data, pd.Series) else data.copy()
             df_reset = df.reset_index()
@@ -59,16 +59,13 @@ class Loading:
             if payload:
                 coll.insert_many(payload)
 
-        # Se for lista
         elif isinstance(data, list):
             if data:
                 coll.insert_many(data)
 
-        # Se for dicionário
         elif isinstance(data, dict):
             coll.insert_one(data)
 
-        # Se for string isolada
         elif isinstance(data, str):
             coll.insert_one({"dado": data})
 

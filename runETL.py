@@ -3,11 +3,6 @@ from src.load import Loading
 from src.transform import Transform
 
 if __name__ == "__main__":
-
-    """
-        Script de ETL para testar os diferentes fluxos (diário e o de horário)
-    
-    """
     extractor = Extract()
     loader = Loading()
     transformation = Transform()
