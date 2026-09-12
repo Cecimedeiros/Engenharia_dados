@@ -50,7 +50,7 @@ class Extract:
         print("--------------------------")
         return response.json()
     
-    def extract_hourly_forecast(self, cidade: str = "sao_paulo") -> dict:
+    def extract_hourly_forecast(self, cidade: str) -> dict:
         """Busca dados de previsão horária da API Open-Meteo.
 
         Parameters

@@ -64,6 +64,7 @@ class Loading:
                 coll.insert_many(data)
 
         elif isinstance(data, dict):
+            coll.delete_many({})
             coll.insert_one(data)
 
         elif isinstance(data, str):

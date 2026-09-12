@@ -5,7 +5,7 @@ class Transform:
     def __init__(self):
         pass
 
-    def transform(self, raw_data: dict) -> pd.DataFrame:
+    def transform(self, raw_data: dict, nome_tabela: str) -> pd.DataFrame:
         """O método recebe o dado bruto extraído da API e limpa/organiza em um DataFrame.
         
         Parameters:
@@ -25,7 +25,7 @@ class Transform:
 
         df = pd.DataFrame(data_payload)
 
-        if "time" in df.columns:
+        if nome_tabela == "forecast_7days_hourly" and "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"])
 
         df = df.dropna().reset_index(drop=True)
