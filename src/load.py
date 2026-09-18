@@ -4,17 +4,20 @@ from dotenv import load_dotenv
 import pandas as pd
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
+from sqlalchemy import create_engine
 
 
 class Loading:
 
     def __init__(self):
-        """Carrega variáveis do .env e inicializa conexões com Mongo e SQLite."""
+        """Carrega variáveis do .env e inicializa conexões com Mongo, SQLite e Neon."""
         load_dotenv()
         self.uri = os.getenv("MONGODB_URI")
         self.sqlite_path = os.getenv("SQLITE_PATH", "weather.db")
         self.client = MongoClient(self.uri, server_api=ServerApi("1"))
         self.conn = sqlite3.connect(self.sqlite_path)
+        self.database_url = os.getenv("DATABASE_URL")
+        self.engine = create_engine(self.database_url)
 
     def load_sqlite(self, df: pd.DataFrame, table_name: str) -> None:
         """Salva o DataFrame transformado em uma tabela no SQLite.
@@ -31,7 +34,23 @@ class Loading:
         print(f"Dados enviados para a tabela '{table_name}' no SQLite com sucesso! ✅")
         print("--------------------------")
 
-    def load_mongo(self, data: dict | pd.DataFrame | list, db_name: str, collection: str) -> None:
+    def load_neon(self, df: pd.DataFrame, table_name: str) -> None:
+        """Salva o DataFrame transformado em uma tabela no SQLite.
+        
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dado a ser inserido no SQLite.
+        table_name : str
+            Nome da tabela de destino no banco de dados.
+        """
+
+        df.to_sql(table_name, con = self.engine, if_exists="replace", index = False)
+        print(f"Dados salvos na tabela '{table_name}' no Neon DB!")
+        print('--------------------------------------------------')
+
+
+    def load_mongo(self, data: dict | pd.DataFrame | list, db_name: str, collection: str):
         """
         Envia o resultado bruto para uma coleção no MongoDB.
 
@@ -72,8 +91,11 @@ class Loading:
 
         print("Dados brutos enviados para o Mongo DB com sucesso! ✅")
         print("--------------------------")
+
         
     def close_connections(self):
         """Fecha as conexões ativas."""
         self.conn.close()
-        self.client.close()    
+        self.client.close()
+        print('conexões fechadas com sucesso! ✅')  
+
