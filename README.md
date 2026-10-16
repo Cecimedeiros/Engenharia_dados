@@ -207,6 +207,7 @@ NEON_DATABASE_URL="sua_string_de_conexao_postgresql_neon"
 │
 ├── 📄 runETL.py
 ├── 📄 requirements.txt
+├── 📄 orchestrate_prefect.py
 ├── 📄 .env
 ├── 📄 .gitignore
 └── 📄 README.md
@@ -227,12 +228,23 @@ Para executar todo o fluxo de ETL, incluindo:
 5. Carregamento dos dados finais no NeonDB.
 6. Apoio local com SQLite.
 
-Execute:
+### Opção 1: Execução Padrão (Script Tradicional)
+
+Execute o fluxo de dados em sequência direta através do script Python tradicional:
 
 ```bash
 python runETL.py
 ```
+### Opção 2: Execução Orquestrada com Prefect
 
+Para iniciar o servidor, configurar a URL da API, e executar a orquestação (para visualizar os gráficos, o status das Tasks e logs em tempo real):
+
+```bash
+
+prefect server start
+prefect config set PREFECT_API_URL=[http://127.0.0.1:4200/api](http://127.0.0.1:4200/api)
+python orchestrate_prefect.py
+```
 ---
 
 ## 🛠️ Tecnologias Utilizadas
@@ -241,6 +253,7 @@ python runETL.py
 | ------------------------- | --------------------------------------------------------------------------------- |
 | **Python 3.10+**          | Linguagem principal da pipeline, com foco em Orientação a Objetos.                |
 | **Pandas**                | Manipulação, limpeza e transformação dos dados meteorológicos.                    |
+| **Prefect**               | Orquestração de workflows, gestão de retentativas (retries), logs e monitoramento.|
 | **Requests**              | Realização de requisições HTTP à API Open-Meteo.                                  |
 | **MongoDB Atlas**         | Banco NoSQL utilizado como Landing Zone para armazenamento dos dados JSON brutos. |
 | **PyMongo**               | Conexão e comunicação com o MongoDB Atlas.                                        |
@@ -289,3 +302,7 @@ Durante o desenvolvimento da pipeline, são aplicados conceitos de:
 Projeto acadêmico desenvolvido ao longo do semestre letivo, com foco na aplicação prática dos conhecimentos de Engenharia de Dados através da construção de uma pipeline ETL utilizando Python, MongoDB Atlas, Pandas, NeonDB e SQLite.
 
 **Status:** Em desenvolvimento contínuo 🚀
+
+## Uso de Inteligência Artificial
+
+Declaro que utilizei a ferramenta de Inteligência Artificial ChatGPT (modelo GPT-4o / GPT-4), Google Gemini (modelo Gemini 1.5 Pro) e Claude (modelo Claude 3.5 Sonnet) ao longo dessa atividade, com a finalidade de gerar um rascunho sobre orquestração de pipelines de ETL, resiliência de workflows e boas práticas em Engenharia de Dados, sobre o qual realizei análise crítica (curadoria) das informações apresentadas. Não tratei dados pessoais no uso desta ferramenta. Revisei criticamente o conteúdo gerado, identificando seus acertos e eventuais imprecisões, e assumo a responsabilidade integral pela versão final apresentada.

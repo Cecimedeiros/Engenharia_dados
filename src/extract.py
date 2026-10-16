@@ -55,7 +55,7 @@ class Extract:
         response = requests.get(self.base_url, params=params, timeout=10)
         response.raise_for_status()
         
-        print("Dados diários referentes à temperatura e precitação da cidade do {cidade} extraídos com sucesso! ✅")
+        print("Dados diários referentes à temperatura e precitação da cidade extraídos com sucesso! ✅")
         print("--------------------------")
         return response.json()
     
@@ -90,7 +90,7 @@ class Extract:
         response = requests.get(self.base_url, params=params, timeout=10)
         response.raise_for_status()
 
-        print("Dados referentes à temperatura e precitação da cidade do {cidade}, por hora do dia, extraídos com sucesso! ✅")
+        print("Dados referentes à temperatura e precitação da cidade, por hora do dia, extraídos com sucesso! ✅")
         print("--------------------------")
 
         return response.json()
