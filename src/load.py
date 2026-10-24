@@ -1,23 +1,19 @@
-import os
 import sqlite3
-from dotenv import load_dotenv
 import pandas as pd
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
 from sqlalchemy import create_engine
+from src import config
 
 
 class Loading:
 
     def __init__(self):
         """Carrega variáveis do .env e inicializa conexões com Mongo, SQLite e Neon."""
-        load_dotenv()
-        self.uri = os.getenv("MONGODB_URI")
-        self.sqlite_path = os.getenv("SQLITE_PATH", "weather.db")
-        self.client = MongoClient(self.uri, server_api=ServerApi("1"))
-        self.conn = sqlite3.connect(self.sqlite_path)
-        self.database_url = os.getenv("DATABASE_URL")
-        self.engine = create_engine(self.database_url)
+        self.client = MongoClient(config.MONGODB_URI, server_api=ServerApi("1"))
+        self.conn = sqlite3.connect(config.SQLITE_PATH)
+        self.engine = create_engine(config.DATABASE_URL)
+
 
     def load_sqlite(self, df: pd.DataFrame, table_name: str) -> None:
         """Salva o DataFrame transformado em uma tabela no SQLite.
@@ -35,12 +31,12 @@ class Loading:
         print("--------------------------")
 
     def load_neon(self, df: pd.DataFrame, table_name: str) -> None:
-        """Salva o DataFrame transformado em uma tabela no SQLite.
+        """Salva o DataFrame transformado em uma tabela no Neon.
         
         Parameters
         ----------
         df : pd.DataFrame
-            Dado a ser inserido no SQLite.
+            Dado a ser inserido no Neon.
         table_name : str
             Nome da tabela de destino no banco de dados.
         """
@@ -83,7 +79,6 @@ class Loading:
                 coll.insert_many(data)
 
         elif isinstance(data, dict):
-            coll.delete_many({})
             coll.insert_one(data)
 
         elif isinstance(data, str):
@@ -97,5 +92,6 @@ class Loading:
         """Fecha as conexões ativas."""
         self.conn.close()
         self.client.close()
+        self.engine.dispose()
         print('conexões fechadas com sucesso! ✅')  
 

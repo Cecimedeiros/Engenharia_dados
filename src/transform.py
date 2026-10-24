@@ -29,10 +29,10 @@ class Transform:
         city_limpa = unidecode(cidade).lower().replace(" ", "_")
         df["city"] = city_limpa
 
+        df["data_extracao"] = raw_data["data_extracao"]
+
         if nome_tabela == "forecast_7days_hourly" and "time" in df.columns:
             df["time"] = pd.to_datetime(df["time"])
-
-        df = df.dropna().reset_index(drop=True)
 
         print("Dados transformados com sucesso! ✅")
         print("--------------------------")

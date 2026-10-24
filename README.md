@@ -65,39 +65,27 @@ Essa etapa tem como finalidade:
 
 **Tecnologia:** Pandas.
 
-Os dados brutos são recuperados do MongoDB Atlas e transformados em um DataFrame para aplicação das regras de negócio.
+Para cada cidade, o Transform lê do MongoDB Atlas **somente a carga mais recente** (maior `data_extracao`) e a converte em DataFrame.
 
-As principais transformações realizadas são:
-
-#### Limpeza dos dados
-
-* Remoção de valores nulos utilizando `dropna()`.
-* Tratamento dos registros para garantir maior consistência dos dados.
+#### Preservação dos dados
+* Nenhuma linha é removida: não há `dropna()` nem índices fixos (como `[0]`). As listas da API (`time`, `temperature_2m_max`, ...) são convertidas inteiras em colunas.
+* Valores ausentes são mantidos como nulos (`NULL` no banco), nunca como zero.
 
 #### Conversão de data e hora
-
-* Conversão dos campos de data/hora utilizando `pd.to_datetime`.
-* Formatação dos dados temporais para facilitar o armazenamento e a análise.
+* Conversão de `time` com `pd.to_datetime` na tabela horária.
 
 #### Identificação da cidade
-
-* Adição da coluna de cidade selecionada em todas as células correspondentes aos registros meteorológicos.
-
-#### Padronização do texto da cidade
-
-A coluna de cidade passa por um tratamento para padronização dos nomes:
-
-1. Remoção de acentos utilizando decomposição NFKD ou `unidecode`.
-2. Conversão dos caracteres para letras minúsculas utilizando `lower()`.
-3. Substituição de espaços por underline utilizando `replace(" ", "_")`.
-
-Exemplo:
+* Adição da coluna `city` em todos os registros.
+* Padronização do nome: remoção de acentos (`unidecode`), minúsculas e espaços trocados por `_`.
 
 ```text
 São Paulo → sao_paulo
 Rio de Janeiro → rio_de_janeiro
 Recife → recife
 ```
+
+#### Rastreabilidade da carga
+* Adição da coluna `data_extracao` (UTC), herdada do dado bruto, indicando de qual extração veio cada linha.
 
 ### 4. Load — Carregamento dos dados
 
@@ -188,31 +176,35 @@ pip install -r requirements.txt
 
 ## 🔐 Variáveis de Ambiente (.env)
 
-Crie um arquivo `.env` na raiz do projeto para armazenar as credenciais de acesso aos bancos de dados.
-
-### Estrutura do arquivo
+O arquivo `.env` é lido **uma única vez** por `src/config.py`, e todos os módulos importam as variáveis de lá (`from src import config`), sem usar `os.getenv` diretamente.
 
 ```env
 MONGODB_URI="sua_string_de_conexao_mongodb_atlas"
-NEON_DATABASE_URL="sua_string_de_conexao_postgresql_neon"
+DATABASE_URL="sua_string_de_conexao_postgresql_neon"
+SQLITE_PATH="weather.db"   # opcional (padrão: weather.db)
 ```
 
-### Exemplo de estrutura do projeto
+`MONGODB_URI` e `DATABASE_URL` são obrigatórias: se faltar alguma, o `config.py` interrompe a execução com uma mensagem clara.
+
+### Estrutura do projeto
 
 ```text
 📁 projeto/
-│
-├── 📁 venv/
+├── 📁 dashboard/
+│   └── app.py
 ├── 📁 src/
-│
+│   ├── config.py
+│   ├── extract.py
+│   ├── transform.py
+│   └── load.py
 ├── 📄 runETL.py
-├── 📄 requirements.txt
 ├── 📄 orchestrate_prefect.py
-├── 📄 .env
+├── 📄 verificacao.py
+├── 📄 requirements.txt
+├── 📄 .env.example
 ├── 📄 .gitignore
 └── 📄 README.md
 ```
-
 > ⚠️ **Importante:** Não compartilhe suas credenciais de banco de dados publicamente. O arquivo `.env` deve ser incluído no `.gitignore` para evitar que suas informações de acesso sejam enviadas ao GitHub.
 
 ---
@@ -242,9 +234,59 @@ Para iniciar o servidor, configurar a URL da API, e executar a orquestação (pa
 ```bash
 
 prefect server start
-prefect config set PREFECT_API_URL=[http://127.0.0.1:4200/api](http://127.0.0.1:4200/api)
+prefect config set PREFECT_API_URL=http://127.0.0.1:4200/api
 python orchestrate_prefect.py
 ```
+---
+## ✅ Integridade dos dados (bronze → final)
+
+O script `verificacao.py` compara o MongoDB (bronze) com o Neon (final).
+
+| Verificação | Resultado |
+|---|---|
+| Índices fixos (`[0]`) no Transform | Não há. As listas da API são convertidas inteiras em colunas. |
+| Registros por cidade | Daily: 7 → 7. Hourly: 168 → 168. Nada é perdido. |
+| Colunas | Final = bronze + `city` + `data_extracao`. |
+| Dado ausente | A Open-Meteo usa `null`. Nas cargas observadas, 0 nulos. |
+| Zeros | na execução verificada, os zeros de precipitation_probability (ex.: 76) são idênticos no bronze e no final (0% de chance de chuva, valor real). |
+| Carga mais recente | `get_from_mongo` ordena por `data_extracao` e o Transform lê só ela. |
+
+**Dado ausente:** a fonte é uma previsão gerada por modelos meteorológicos, que calculam todas as variáveis para todo ponto e horário, e não uma medição de sensores que podem falhar. Por isso não há ausentes. Mesmo assim, o `dropna()` foi removido e não há `fillna(0)`, então um `null` seria preservado como `NULL`, nunca como zero.
+
+**Sem apagar dados:** cada extração insere um documento novo no Mongo (`insert_one`, com `cidade` e `data_extracao` em UTC), então o bronze acumula todas as cargas. Apenas as tabelas finais (Neon e SQLite) são regravadas com a última extração, pois são derivadas do bronze.
+
+> 📸 Saída `verificacao.py` após duas execuções (2 cargas por cidade, com 7 e 168 registros na final).
+
+![verificação daily](assets\image.png)
+![verificação hourly](assets\image-1.png)
+
+Para executar a verificação (a partir da raiz do projeto, com o pipeline já rodado):
+
+```bash
+python verificacao.py
+```
+---
+
+## 📊 Dashboard (Streamlit)
+
+O dashboard lê do Neon a tabela final `forecast_7days_daily`, usando a conexão de `src/config.py`.
+
+* **Filtro:** seleção da cidade.
+* **Gráfico:** temperaturas máxima e mínima dos 7 dias.
+* **Indicadores (`st.metric`):** temperatura máxima da semana, maior índice UV (cada um com a data correspondente) e data da última atualização.
+
+### Como rodar
+
+Com o ambiente virtual ativo e o pipeline já executado ao menos uma vez (para a tabela existir no Neon), execute **a partir da raiz do projeto**:
+
+```bash
+python -m streamlit run dashboard/app.py
+```
+
+O dashboard abre em `http://localhost:8501`.
+
+> 📸 *![dashboard](assets\image-2.png)*
+
 ---
 
 ## 🛠️ Tecnologias Utilizadas
@@ -260,6 +302,9 @@ python orchestrate_prefect.py
 | **NeonDB / PostgreSQL**   | Banco de dados relacional em nuvem para armazenamento dos dados finais.           |
 | **SQLAlchemy / psycopg2** | Conexão e integração com o banco PostgreSQL.                                      |
 | **SQLite**                | Banco relacional local utilizado para testes e validações.                        |
+| **python-dotenv**         | Leitura do `.env`, centralizada em `src/config.py`.                               |
+| **Streamlit**             | Dashboard interativo conectado ao Neon.                                           |
+| **Altair**                | Gráfico de temperaturas do dashboard.                                             |
 
 ---
 

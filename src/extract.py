@@ -1,8 +1,8 @@
 import requests
-from dotenv import load_dotenv
-import os
 from pymongo import MongoClient
 from pymongo.server_api import ServerApi
+from src import config
+from datetime import datetime, timezone
 
 class Extract:
     CIDADES: dict[str, dict[str, float]] = {
@@ -12,14 +12,10 @@ class Extract:
     }
 
     def __init__(self):
-        """Inicializa os valores fixos, carrega variáveis do .env e inicializa conexões com o Mongo."""
-        load_dotenv()
-
+        """Inicializa a URL base da API e a conexão com o Mongo."""
         self.base_url: str = "https://api.open-meteo.com/v1/forecast"
-        self.uri = os.getenv("MONGODB_URI")
-        self.client = MongoClient(self.uri, server_api=ServerApi("1"))
-        
-
+        self.client = MongoClient(config.MONGODB_URI, server_api=ServerApi("1"))
+       
     def extract_daily_forecast(self, cidade: str) -> dict:
         """Busca dados de previsão dos próximos 7 dias da API Open-Meteo.
 
@@ -55,9 +51,13 @@ class Extract:
         response = requests.get(self.base_url, params=params, timeout=10)
         response.raise_for_status()
         
-        print("Dados diários referentes à temperatura e precitação da cidade extraídos com sucesso! ✅")
+        print("ados diários (temperatura e índice UV) extraídos com sucesso! ✅")
         print("--------------------------")
-        return response.json()
+        
+        dados = response.json()
+        dados["cidade"] = cidade_limpa
+        dados["data_extracao"] = datetime.now(timezone.utc)
+        return dados
     
     def extract_hourly_forecast(self, cidade: str) -> dict:
         """Busca dados de previsão horária da API Open-Meteo.
@@ -93,31 +93,39 @@ class Extract:
         print("Dados referentes à temperatura e precitação da cidade, por hora do dia, extraídos com sucesso! ✅")
         print("--------------------------")
 
-        return response.json()
+        dados = response.json()
+        dados["cidade"] = cidade_limpa
+        dados["data_extracao"] = datetime.now(timezone.utc)
+        return dados
     
-    def get_from_mongo(self, db_name: str, collection: str) -> dict:
-        """Recupera o registro mais recente salvo no MongoDB Atlas.
+    def get_from_mongo(self, db_name: str, collection: str, cidade: str) -> dict:
+        """Recupera a carga mais recente de uma cidade no MongoDB Atlas.
 
-        Parameters:
-        database_name : str
+        Parameters
+        ----------
+        db_name : str
             Nome do banco de dados no Mongo.
-        collection_name : str
+        collection : str
             Nome da coleção (ex: 'WEATHER_DAILY').
+        cidade : str
+            Cidade cuja carga mais recente será buscada (ex: 'recife').
 
-        Returns:
+        Returns
+        -------
         dict
-            Dicionário com os dados brutos sem a chave internal '_id'.
+            Dicionário com os dados brutos, sem a chave interna '_id'.
         """
-        db = self.client[db_name]
-        coll = db[collection]
+        coll = self.client[db_name][collection]
 
-        # Busca o documento mais recente adicionado
-        data = coll.find_one(sort=[("_id", -1)])
+        # Carga mais recente da cidade, pela data de extração
+        data = coll.find_one(
+            {"cidade": cidade.lower().strip()},
+            sort=[("data_extracao", -1)],
+        )
 
         if not data:
-            raise ValueError(f"Nenhum dado encontrado na coleção {collection}")
+            raise ValueError(f"Nenhum dado de '{cidade}' na coleção {collection}")
 
         data.pop("_id", None)
-
         return data
 
