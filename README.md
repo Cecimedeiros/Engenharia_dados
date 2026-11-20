@@ -280,7 +280,7 @@ O comando registra no Prefect o deployment `etl-semanal-sabado-9h`, com uma agen
 O arquivo `.github/workflows/etl.yml` roda a mesma pipeline nos servidores do GitHub, **todo sábado às 9h (Brasília) até 12/12/2026**, e também pode ser disparado na hora (aba **Actions → ETL semanal → Run workflow**). O workflow:
 
 1. instala Java 21 e Python;
-2. instala o `requirements.txt`;
+2. instala o `requirements.txt` (que fixa também a versão do FastAPI usada pelo Prefect, já que versões novas são incompatíveis);
 3. roda `python orchestrate_prefect.py`, com o Prefect subindo um servidor temporário só durante a execução;
 4. roda o `verificacao.py`.
 

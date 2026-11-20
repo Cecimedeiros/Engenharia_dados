@@ -12,6 +12,8 @@ pandas==3.0.5
 
 # Orquestração
 prefect==3.8.8
+# o Prefect 3.8.8 quebra com o FastAPI 0.165+ (Body(min_items=...)); versão testada:
+fastapi==0.143.2
 
 # Produto (dashboard)
 streamlit==1.66.1

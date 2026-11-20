@@ -38,16 +38,16 @@ jobs:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       PREFECT_SERVER_ANALYTICS_ENABLED: "false"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Java 21 (necessário para o Spark)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14"
           cache: pip
