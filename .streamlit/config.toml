@@ -1,0 +1,8 @@
+# O tema claro/escuro é controlado pelo botão do próprio painel (dashboard/app.py).
+# O tema nativo fica fixo em claro para não conflitar com ele.
+[theme]
+base = "light"
+primaryColor = "#7033CC"
+
+[client]
+toolbarMode = "minimal"

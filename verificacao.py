@@ -1,12 +1,14 @@
 import pandas as pd
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from src import config
 from src.extract import Extract
+from src.load import Loading
 
+# (coleção no Mongo, chave do bloco no JSON, tabela prata no Neon, coluna de tempo)
 CONFIG = [
-    ("WEATHER_DAILY", "daily", "forecast_7days_daily"),
-    ("WEATHER_HOURLY", "hourly", "forecast_7days_hourly"),
+    ("WEATHER_DAILY", "daily", "forecast_daily", "date"),
+    ("WEATHER_HOURLY", "hourly", "forecast_hourly", "time"),
 ]
 
 CABECALHO = ("Verificação", "Bronze", "Final", "Status")
@@ -43,27 +45,22 @@ tabelas_existentes = inspect(engine).get_table_names()
 print("Banco:", engine.url.database, "| host:", engine.url.host)
 print("Tabelas encontradas:", tabelas_existentes)
 
-faltando = [t for _, _, t in CONFIG if t not in tabelas_existentes]
+faltando = [t for _, _, t, _ in CONFIG if t not in tabelas_existentes]
 if faltando:
-    print(f"\nTabela(s) não encontrada(s) neste banco: {faltando}")
-    extractor.client.close()
+    print(f"\nTabela(s) não encontrada(s) neste banco: {faltando}. Rode a pipeline antes.")
+    extractor.close()
     engine.dispose()
     raise SystemExit(1)
 
 # ---------- verificações ----------
 problemas = 0
 
-for colecao, chave, tabela in CONFIG:
+for colecao, chave, tabela, col_tempo in CONFIG:
     coll = extractor.client["OPEN_METEO"][colecao]
     df = pd.read_sql(f"SELECT * FROM {tabela}", engine)
-
-    if "data_extracao" not in df.columns:
-        print(f"\n{tabela}: sem a coluna data_extracao. Ajuste o Transform e rode o pipeline de novo.")
-        problemas += 1
-        continue
     df["data_extracao"] = pd.to_datetime(df["data_extracao"])
 
-    # carga mais recente de cada cidade (é a que o Transform lê)
+    # carga mais recente de cada cidade (é a que o Spark lê)
     docs = {
         c: coll.find_one({"cidade": c}, sort=[("data_extracao", -1)])
         for c in Extract.CIDADES
@@ -74,15 +71,21 @@ for colecao, chave, tabela in CONFIG:
         problemas += 1
         continue
 
+    # linhas da final que vieram da carga mais recente de cada cidade
+    recentes = pd.concat([
+        df[(df["city"] == c) & (df["data_extracao"] == pd.Timestamp(doc["data_extracao"]))]
+        for c, doc in docs.items()
+    ])
+
     linhas = []
 
-    # 1) registros por cidade
+    # 1) registros da carga mais recente, por cidade
     for cidade, doc in docs.items():
         n_bronze = len(doc[chave]["time"])
-        n_final = int((df["city"] == cidade).sum())
-        linhas.append((f"Registros - {cidade}", n_bronze, n_final, status(n_bronze == n_final)))
+        n_final = int((recentes["city"] == cidade).sum())
+        linhas.append((f"Registros (última carga) - {cidade}", n_bronze, n_final, status(n_bronze == n_final)))
 
-    # 2) colunas: final = bronze + city + data_extracao
+    # 2) colunas: final = bronze + city + data_extracao ('time' vira '{col_tempo}')
     cols_bronze = len(next(iter(docs.values()))[chave])
     cols_final = len(df.columns)
     linhas.append((
@@ -90,45 +93,51 @@ for colecao, chave, tabela in CONFIG:
         cols_bronze, cols_final, status(cols_final == cols_bronze + 2),
     ))
 
-    # 3) nulos nas colunas de dado (as colunas novas ficam de fora)
-    cols_dado = [c for c in df.columns if c not in ("city", "data_extracao")]
+    # 3) nulos nas colunas de dado (as colunas criadas pela pipeline ficam de fora)
+    cols_dado = [c for c in df.columns if c not in ("city", "data_extracao", col_tempo)]
     nulos_bronze = sum(
-        v is None for doc in docs.values() for lista in doc[chave].values() for v in lista
+        v is None for doc in docs.values()
+        for k, lista in doc[chave].items() if k != "time" for v in lista
     )
-    nulos_final = int(df[cols_dado].isna().sum().sum())
-    linhas.append(("Nulos (total)", nulos_bronze, nulos_final, status(nulos_bronze == nulos_final)))
+    nulos_final = int(recentes[cols_dado].isna().sum().sum())
+    linhas.append(("Nulos (última carga)", nulos_bronze, nulos_final, status(nulos_bronze == nulos_final)))
 
     # 4) zeros por coluna numérica
-    for col in df.select_dtypes("number").columns:
+    for col in cols_dado:
         zeros_bronze = sum(
             v == 0 for doc in docs.values() for v in doc[chave][col] if v is not None
         )
-        zeros_final = int((df[col] == 0).sum())
+        zeros_final = int((recentes[col] == 0).sum())
         linhas.append((f"Zeros - {col}", zeros_bronze, zeros_final, status(zeros_bronze == zeros_final)))
 
-    # 5) carga lida: data_extracao mais recente no bronze = data_extracao da final
-    for cidade, doc in docs.items():
-        bronze_dt = pd.Timestamp(doc["data_extracao"])
-        datas_final = df.loc[df["city"] == cidade, "data_extracao"].unique()
-        final_dt = pd.Timestamp(datas_final[0]) if len(datas_final) == 1 else None
-        linhas.append((
-            f"Carga lida - {cidade}",
-            bronze_dt.strftime("%d/%m %H:%M:%S"),
-            final_dt.strftime("%d/%m %H:%M:%S") if final_dt is not None else f"{len(datas_final)} datas",
-            status(final_dt is not None and bronze_dt == final_dt),
-        ))
+    # 5) idempotência: nenhuma chave primária repetida na final
+    pk = ", ".join(Loading.CHAVES_PRIMARIAS[tabela])
+    with engine.connect() as conn:
+        dup_final = conn.execute(text(
+            f"SELECT COUNT(*) FROM (SELECT {pk} FROM {tabela} GROUP BY {pk} HAVING COUNT(*) > 1) t"
+        )).scalar()
+    dup_bronze = sum(1 for _ in coll.aggregate([
+        {"$match": {"cidade": {"$exists": True}, "data_extracao": {"$exists": True}}},
+        {"$group": {"_id": {"c": "$cidade", "d": "$data_extracao"}, "n": {"$sum": 1}}},
+        {"$match": {"n": {"$gt": 1}}},
+    ]))
+    linhas.append(("Chaves duplicadas", dup_bronze, dup_final, status(dup_bronze == 0 and dup_final == 0)))
 
-    # 6) cargas acumuladas (só existe no bronze)
+    # 6) histórico: cargas no bronze x períodos acumulados na final
     for cidade in Extract.CIDADES:
         n_cargas = coll.count_documents({"cidade": cidade})
-        linhas.append((f"Cargas acumuladas - {cidade}", n_cargas, NA, status(n_cargas >= 1)))
+        n_periodos = int((df["city"] == cidade).sum())
+        linhas.append((
+            f"Cargas no bronze / {col_tempo}s na final - {cidade}",
+            n_cargas, n_periodos, status(n_cargas >= 1 and n_periodos >= 1),
+        ))
 
     # 7) data_extracao ausente
     sem_data = coll.count_documents({"data_extracao": {"$exists": False}})
     nulos_data_final = int(df["data_extracao"].isna().sum())
     linhas.append((
         "Sem data_extracao", sem_data, nulos_data_final,
-        status(sem_data == 0 and nulos_data_final == 0),
+        status(nulos_data_final == 0),
     ))
 
     problemas += sum(1 for l in linhas if l[3] != "OK")
@@ -136,12 +145,12 @@ for colecao, chave, tabela in CONFIG:
     print(f"\n{colecao} -> {tabela}")
     imprimir_tabela(linhas)
     print("Observações:")
-    print("* Datas em UTC, como são gravadas pelo pipeline.")
-    print("* Cargas acumuladas: não aplicável na final, que guarda só a carga mais recente")
-    print("  de cada cidade (replace). O histórico de cargas fica apenas no bronze (Mongo).")
-    print("* Nulos: as colunas city e data_extracao ficam de fora, pois são criadas pelo pipeline.")
+    print("* Datas em UTC, como são gravadas pela pipeline.")
+    print("* A final acumula histórico (upsert por chave primária); as comparações com o")
+    print("  bronze usam só as linhas que vieram da carga mais recente de cada cidade.")
+    print("* 'Sem data_extracao' no bronze conta documentos antigos, anteriores a essa coluna.")
 
 print(f"\nResumo: {'tudo OK' if problemas == 0 else f'{problemas} verificação(ões) com ATENÇÃO'}")
 
-extractor.client.close()
+extractor.close()
 engine.dispose()

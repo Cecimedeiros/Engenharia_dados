@@ -5,3 +5,7 @@ __pycache__/
 .env
 *.db
 *.sqlite
+# Spark
+spark-warehouse/
+metastore_db/
+derby.log

@@ -1,120 +1,131 @@
-import pandas as pd
-from prefect import flow, task, get_run_logger
+import sys
+
+from prefect import flow, get_run_logger, task
+from prefect.cache_policies import NO_CACHE
+from prefect.schedules import RRule
+
 from src.extract import Extract
 from src.load import Loading
 from src.transform import Transform
 
+CIDADES = Extract.CIDADES
+DB_MONGO = "OPEN_METEO"
+COLECOES = {"daily": "WEATHER_DAILY", "hourly": "WEATHER_HOURLY"}
+TABELAS_FATO = ["forecast_daily", "forecast_hourly", "urban_risk_daily"]
 
-# --- TAREFAS DE EXTRAÇÃO ---
 
-@task(retries=3, retry_delay_seconds=10)
-def extract_daily(cidade: str) -> dict:
-    logger = get_run_logger()
-    extractor = Extract()
-    logger.info(f"Extraindo previsão diária para {cidade}...")
-    return extractor.extract_daily_forecast(cidade=cidade)
+# --- EXTRAÇÃO (API -> bronze) ---
 
 @task(retries=3, retry_delay_seconds=10)
-def extract_hourly(cidade: str) -> dict:
+def extract(cidade: str, tipo: str) -> dict:
     logger = get_run_logger()
-    extractor = Extract()
-    logger.info(f"Extraindo previsão horária para {cidade}...")
-    return extractor.extract_hourly_forecast(cidade=cidade)
+    logger.info(f"Extraindo previsão '{tipo}' para {cidade}...")
+    with Extract() as extractor:
+        return extractor.extract_forecast(cidade, tipo)
+
+
+@task(retries=3, retry_delay_seconds=5, cache_policy=NO_CACHE)
+def load_bronze(doc: dict, collection: str) -> None:
+    logger = get_run_logger()
+    with Loading() as loader:
+        loader.load_mongo(doc, DB_MONGO, collection)
+    logger.info(f"Bruto de {doc['cidade']} gravado em {DB_MONGO}.{collection} (upsert)")
+
 
 @task(retries=3, retry_delay_seconds=5)
-def get_from_mongo(db_name: str, collection_name: str, cidade: str):
+def read_bronze(collection: str) -> list[dict]:
     logger = get_run_logger()
-    extractor = Extract()
-    logger.info(f"Buscando carga mais recente de {cidade} em {db_name}.{collection_name}")
-    return extractor.get_from_mongo(db_name, collection_name, cidade)
+    logger.info(f"Lendo a carga mais recente de cada cidade em {DB_MONGO}.{collection}")
+    with Extract() as extractor:
+        return [extractor.get_from_mongo(DB_MONGO, collection, c) for c in CIDADES]
 
 
-# --- TAREFAS DE TRANSFORMAÇÃO ---
+# --- TRANSFORMAÇÃO (Spark: bronze -> prata e ouro) ---
 
-@task
-def transform_data(raw_data, nome_tabela: str, cidade: str):
+@task(cache_policy=NO_CACHE)
+def transform(docs_daily: list[dict], docs_hourly: list[dict]) -> dict[str, list[dict]]:
     logger = get_run_logger()
-    transformer = Transform()
-    logger.info(f"Transformando dados para a tabela {nome_tabela} ({cidade})...")
-    df_tratado = transformer.transform(raw_data, nome_tabela=nome_tabela, cidade=cidade)
+    with Transform() as st:
+        daily = st.silver(docs_daily, "daily").cache()
+        hourly = st.silver(docs_hourly, "hourly")
+        gold = st.gold_risk(daily)
 
-    # confere bronze vs. final
-    chave = "daily" if "daily" in raw_data else "hourly"
-    n_bronze = len(raw_data[chave]["time"])
-    logger.info(f"{cidade}: bronze={n_bronze} | final={len(df_tratado)}")
-    if n_bronze != len(df_tratado):
-        raise ValueError(f"{cidade}: perda de registros ({n_bronze} -> {len(df_tratado)})")
+        # confere bronze vs. prata, cidade a cidade: nenhuma linha pode se perder
+        for tipo, docs, df in (("daily", docs_daily, daily), ("hourly", docs_hourly, hourly)):
+            contagem = st.contar_por_cidade(df)
+            for doc in docs:
+                n_bronze = len(doc[tipo]["time"])
+                n_prata = contagem.get(doc["cidade"], 0)
+                logger.info(f"{tipo} {doc['cidade']}: bronze={n_bronze} | prata={n_prata}")
+                if n_bronze != n_prata:
+                    raise ValueError(
+                        f"{tipo} {doc['cidade']}: perda de registros ({n_bronze} -> {n_prata})"
+                    )
 
-    return df_tratado
+        return {
+            "forecast_daily": st.to_records(daily),
+            "forecast_hourly": st.to_records(hourly),
+            "urban_risk_daily": st.to_records(gold),
+        }
 
 
-# --- TAREFAS DE CARGA ---
-
-@task(retries=3, retry_delay_seconds=5)
-def load_mongo(data, db_name: str, collection_name: str):
-    logger = get_run_logger()
-    loader = Loading()
-    loader.load_mongo(data, db_name, collection_name)
-    logger.info(f"Dados brutos inseridos no MongoDB ({db_name}.{collection_name})")
+# --- CARGA (Neon) ---
 
 @task(retries=3, retry_delay_seconds=10)
-def load_sqlite(df, table_name: str):
+def prepare_neon() -> None:
+    """Cria as tabelas (se não existirem) e grava a dimensão de cidades."""
     logger = get_run_logger()
-    loader = Loading()
-    loader.load_sqlite(df, table_name)
-    logger.info(f"{len(df)} registros inseridos no SQLite (tabela: {table_name})")
+    dim = [{"city": c, **info} for c, info in CIDADES.items()]
+    with Loading() as loader:
+        loader.create_schema()
+        loader.upsert_neon(dim, "dim_city")
+    logger.info(f"dim_city atualizada com {len(dim)} localidades")
 
-@task(retries=3, retry_delay_seconds=10)
-def load_neon(df, table_name: str):
-    logger = get_run_logger()
-    loader = Loading()
-    loader.load_neon(df, table_name=table_name)
-    logger.info(f"{len(df)} registros inseridos no Neon Postgres (tabela: {table_name})")
 
-@task
-def close_connections():
+@task(retries=3, retry_delay_seconds=10, cache_policy=NO_CACHE)
+def load_neon(registros: list[dict], table_name: str) -> None:
     logger = get_run_logger()
-    loader = Loading()
-    loader.close_connections()
-    logger.info("Conexões encerradas com sucesso.")
+    with Loading() as loader:
+        n = loader.upsert_neon(registros, table_name)
+    logger.info(f"{n} registros gravados (upsert) no Neon (tabela: {table_name})")
 
 
 # --- FLUXO PRINCIPAL ---
 
 @flow(name="ETL OpenMeteo Weather Prefect", log_prints=True)
 def run_etl():
-    dfs_daily, dfs_hourly = [], []
+    # 1. API -> bronze (Mongo)
+    for tipo, colecao in COLECOES.items():
+        for cidade in CIDADES:
+            doc = extract(cidade, tipo)
+            load_bronze(doc, colecao)
 
-    try:
-        for cidade in Extract.CIDADES:
-            # Daily
-            brutos_daily = extract_daily(cidade=cidade)
-            load_mongo(brutos_daily, "OPEN_METEO", "WEATHER_DAILY")
-            daily_mongo = get_from_mongo("OPEN_METEO", "WEATHER_DAILY", cidade)
-            dfs_daily.append(
-                transform_data(daily_mongo, nome_tabela="forecast_7days_daily", cidade=cidade)
-            )
+    # 2. bronze -> Spark (prata + ouro)
+    tabelas = transform(read_bronze(COLECOES["daily"]), read_bronze(COLECOES["hourly"]))
 
-            # Hourly
-            brutos_hourly = extract_hourly(cidade=cidade)
-            load_mongo(brutos_hourly, "OPEN_METEO", "WEATHER_HOURLY")
-            hourly_mongo = get_from_mongo("OPEN_METEO", "WEATHER_HOURLY", cidade)
-            dfs_hourly.append(
-                transform_data(hourly_mongo, nome_tabela="forecast_7days_hourly", cidade=cidade)
-            )
+    # 3. Neon (upsert)
+    prepare_neon()
+    for nome in TABELAS_FATO:
+        load_neon(tabelas[nome], nome)
 
-        # Carrega as 3 cidades juntas
-        df_daily = pd.concat(dfs_daily, ignore_index=True)
-        df_hourly = pd.concat(dfs_hourly, ignore_index=True)
 
-        load_sqlite(df_daily, "forecast_7days_daily")
-        load_neon(df_daily, table_name="forecast_7days_daily")
-
-        load_sqlite(df_hourly, "forecast_7days_hourly")
-        load_neon(df_hourly, table_name="forecast_7days_hourly")
-    finally:
-        close_connections()
+# --- AGENDAMENTO ---
+# Todo sábado às 9h (horário de Brasília), de 21/11 até 12/12/2026.
+AGENDA = RRule(
+    "DTSTART:20261121T090000\n"
+    "RRULE:FREQ=WEEKLY;BYDAY=SA;BYHOUR=9;BYMINUTE=0;UNTIL=20261212T235959",
+    timezone="America/Sao_Paulo",
+)
 
 
 if __name__ == "__main__":
-    run_etl()
+    if "--agendar" in sys.argv:
+        # Registra o deployment com a agenda e fica escutando: o processo
+        # (e o `prefect server start`) precisam continuar abertos.
+        run_etl.serve(
+            name="etl-semanal-sabado-9h",
+            schedules=[AGENDA],
+            description="ETL Open-Meteo -> Mongo -> Spark -> Neon, todo sábado às 9h até 12/12.",
+        )
+    else:
+        run_etl()  # execução única, na hora
