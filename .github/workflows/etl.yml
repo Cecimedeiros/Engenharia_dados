@@ -1,0 +1,64 @@
+# Roda a pipeline nos servidores do GitHub (o notebook pode estar desligado).
+# Agenda: todo sábado às 9h (Brasília) até 12/12/2026. Também pode ser
+# disparada na hora pela aba Actions -> "ETL semanal" -> "Run workflow".
+#
+# Pré-requisitos (configurar no GitHub e no Atlas):
+# * Settings -> Secrets and variables -> Actions: MONGODB_URI e DATABASE_URL
+# * MongoDB Atlas -> Network Access: liberar 0.0.0.0/0 (os IPs do GitHub variam)
+
+name: ETL semanal (Open-Meteo -> Mongo -> Spark -> Neon)
+
+on:
+  schedule:
+    - cron: "0 12 * * 6"   # sábado, 12:00 UTC = 9h em Brasília
+  workflow_dispatch: {}
+
+jobs:
+  periodo:
+    runs-on: ubuntu-latest
+    outputs:
+      rodar: ${{ steps.data.outputs.rodar }}
+    steps:
+      - id: data
+        name: Agenda vale só até 12/12/2026
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%Y%m%d)" -gt 20261212 ]; then
+            echo "rodar=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "rodar=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  etl:
+    needs: periodo
+    if: needs.periodo.outputs.rodar == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MONGODB_URI: ${{ secrets.MONGODB_URI }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Java 21 (necessário para o Spark)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Dependências
+        run: pip install -r requirements.txt
+
+      # Sem servidor do Prefect configurado, o flow sobe um servidor temporário
+      # só durante a execução (logs das tasks aparecem aqui no Actions).
+      - name: Pipeline (Prefect)
+        run: python orchestrate_prefect.py
+
+      - name: Verificação bronze x final
+        run: python verificacao.py
