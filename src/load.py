@@ -1,12 +1,26 @@
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
 from pymongo import MongoClient, ReplaceOne
 from pymongo.server_api import ServerApi
 from sqlalchemy import MetaData, Table, create_engine, text
 from sqlalchemy.dialects.postgresql import insert
 from src import config
 
-# Chave natural de um documento bruto: uma extração de uma cidade.
+# Índice único do bronze: impede gravar a mesma extração duas vezes.
 CHAVE_BRONZE: list[str] = ["cidade", "data_extracao"]
+# O "dia" de uma extração é contado no horário de Brasília.
+FUSO = ZoneInfo("America/Sao_Paulo")
 LOTE_UPSERT: int = 1000
+
+
+def intervalo_do_dia(data_extracao: datetime) -> tuple[datetime, datetime]:
+    """Início e fim (em UTC) do dia local, em Brasília, de uma data_extracao."""
+    if data_extracao.tzinfo is None:  # o Mongo devolve datas sem fuso, em UTC
+        data_extracao = data_extracao.replace(tzinfo=timezone.utc)
+    inicio = data_extracao.astimezone(FUSO).replace(hour=0, minute=0, second=0, microsecond=0)
+    fim = inicio + timedelta(days=1)
+    return inicio.astimezone(timezone.utc), fim.astimezone(timezone.utc)
 
 
 class Loading:
@@ -172,9 +186,13 @@ class Loading:
     def load_mongo(self, data: dict | list[dict], db_name: str, collection: str) -> None:
         """Envia o resultado bruto para uma coleção no MongoDB, sem duplicar.
 
-        A coleção tem um índice único em (cidade, data_extracao). O documento é
-        gravado com upsert por essa chave: se a mesma extração for enviada de
-        novo (por exemplo, num retry do Prefect), ela é substituída, não duplicada.
+        O bronze guarda **um documento por cidade por dia** (o dia de
+        data_extracao, no horário de Brasília). A gravação é um upsert que procura
+        o documento da mesma cidade com data_extracao dentro do mesmo dia:
+        * rodar de novo no mesmo dia -> substitui o documento do dia;
+        * rodar em outro dia -> cria um documento novo (histórico diário).
+        O índice único em (cidade, data_extracao) é uma proteção extra contra
+        gravar a mesma extração duas vezes.
 
         Parameters
         ----------
@@ -195,9 +213,11 @@ class Loading:
         )
 
         docs = [data] if isinstance(data, dict) else list(data)
-        operacoes = [
-            ReplaceOne({c: d[c] for c in CHAVE_BRONZE}, d, upsert=True) for d in docs
-        ]
+        operacoes = []
+        for d in docs:
+            inicio, fim = intervalo_do_dia(d["data_extracao"])
+            filtro = {"cidade": d["cidade"], "data_extracao": {"$gte": inicio, "$lt": fim}}
+            operacoes.append(ReplaceOne(filtro, d, upsert=True))
         if operacoes:
             coll.bulk_write(operacoes)
 

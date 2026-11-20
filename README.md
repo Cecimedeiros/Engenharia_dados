@@ -71,8 +71,10 @@ Os índices de risco (`urban_risk_daily`) são calculados a partir da tabela **d
 
 O JSON retornado pela API é gravado como veio, acrescido de `cidade` e `data_extracao` (UTC), nas coleções `OPEN_METEO.WEATHER_DAILY` e `OPEN_METEO.WEATHER_HOURLY`.
 
-* Cada extração vira um documento novo, então o bronze guarda o histórico de todas as cargas.
-* **Índice único em `(cidade, data_extracao)`** e gravação com upsert (`ReplaceOne(..., upsert=True)`). Se a mesma extração for reenviada (por exemplo, num retry do Prefect), ela não é duplicada.
+* **Um documento por cidade por dia**, sendo o dia o de `data_extracao` no horário de Brasília. A gravação é um upsert (`ReplaceOne(..., upsert=True)`) que procura o documento da mesma cidade com `data_extracao` dentro do mesmo dia:
+  * rodar a pipeline de novo **no mesmo dia** substitui o documento do dia, sem acumular cópias;
+  * rodar **em outro dia** cria um documento novo, e o bronze guarda o histórico diário.
+* **Índice único em `(cidade, data_extracao)`** como proteção extra: a mesma extração nunca é gravada duas vezes (por exemplo, num retry do Prefect).
 
 ### 3. Transform — PySpark
 
@@ -303,8 +305,8 @@ O script `verificacao.py` compara o MongoDB (bronze) com o Neon (prata).
 | Registros (última carga) | linhas por cidade na prata = tamanho das listas no bronze |
 | Colunas | final = bronze + `city` + `data_extracao` |
 | Nulos e zeros | os mesmos no bronze e na final (nulo continua nulo, zero continua zero) |
-| Chaves duplicadas | 0 no bronze `(cidade, data_extracao)` e 0 na final (chave primária) → cargas idempotentes |
-| Histórico | cargas acumuladas no bronze e dias/horas acumulados na final |
+| Duplicatas | 0 no bronze (no máximo 1 documento por cidade por dia) e 0 na final (chave primária) → cargas idempotentes |
+| Histórico | dias acumulados no bronze e dias/horas acumulados na final |
 
 **Dado ausente:** a fonte é uma previsão gerada por modelos meteorológicos, que calculam todas as variáveis para todo ponto e horário. Não é uma medição de sensores que podem falhar, por isso normalmente não há ausentes. Mesmo assim, não há `dropna()` nem `fillna(0)`: um `null` é preservado como `NULL`, nunca como zero. Os índices de risco também ficam nulos quando a variável de origem é nula.
 
@@ -379,7 +381,7 @@ O dashboard abre em `http://localhost:8501`.
 * Arquitetura medalhão (bronze, prata e ouro).
 * Extração de dados via API.
 * Bancos NoSQL (bronze) e relacionais (prata/ouro).
-* Cargas idempotentes (índice único no Mongo, chave primária e upsert no Postgres).
+* Cargas idempotentes (upsert diário no Mongo, chave primária e upsert no Postgres).
 * Processamento com Spark (schema explícito, `explode`, funções de janela).
 * Orquestração e agendamento com Prefect (tasks, retries, logs, deployment com agenda).
 * Credenciais centralizadas fora do código (`.env` local, *Secrets* no GitHub e no Streamlit Cloud).

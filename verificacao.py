@@ -116,19 +116,27 @@ for colecao, chave, tabela, col_tempo in CONFIG:
         dup_final = conn.execute(text(
             f"SELECT COUNT(*) FROM (SELECT {pk} FROM {tabela} GROUP BY {pk} HAVING COUNT(*) > 1) t"
         )).scalar()
+    # bronze: no máximo um documento por cidade por dia (horário de Brasília)
     dup_bronze = sum(1 for _ in coll.aggregate([
         {"$match": {"cidade": {"$exists": True}, "data_extracao": {"$exists": True}}},
-        {"$group": {"_id": {"c": "$cidade", "d": "$data_extracao"}, "n": {"$sum": 1}}},
+        {"$group": {
+            "_id": {
+                "c": "$cidade",
+                "dia": {"$dateToString": {"format": "%Y-%m-%d", "date": "$data_extracao",
+                                          "timezone": "America/Sao_Paulo"}},
+            },
+            "n": {"$sum": 1},
+        }},
         {"$match": {"n": {"$gt": 1}}},
     ]))
-    linhas.append(("Chaves duplicadas", dup_bronze, dup_final, status(dup_bronze == 0 and dup_final == 0)))
+    linhas.append(("Duplicatas (bronze: cidade+dia | final: PK)", dup_bronze, dup_final, status(dup_bronze == 0 and dup_final == 0)))
 
     # 6) histórico: cargas no bronze x períodos acumulados na final
     for cidade in Extract.CIDADES:
         n_cargas = coll.count_documents({"cidade": cidade})
         n_periodos = int((df["city"] == cidade).sum())
         linhas.append((
-            f"Cargas no bronze / {col_tempo}s na final - {cidade}",
+            f"Dias no bronze / {col_tempo}s na final - {cidade}",
             n_cargas, n_periodos, status(n_cargas >= 1 and n_periodos >= 1),
         ))
 
